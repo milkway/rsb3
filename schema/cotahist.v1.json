@@ -1,0 +1,33 @@
+{
+  "name": "cotahist",
+  "version": "v1",
+  "status": "frozen",
+  "description": "Esquema Arrow do parser COTAHIST (rsb3, SchemaVersion::V1). Nomes alinhados ao template b3-cotahist-daily do oráculo {rb3}; sufixo _cents onde a unidade é centavo (2 decimais implícitos no arquivo posicional). Congelado na v0.1: mudança de esquema gera v2, nunca alteração in-place. maturity_date usa null para 99991231 (sem vencimento); days_to_settlement é branco no mercado à vista.",
+  "fields": [
+    { "name": "refdate", "type": "date32", "nullable": false },
+    { "name": "bdi_code", "type": "utf8", "nullable": false },
+    { "name": "symbol", "type": "utf8", "nullable": false },
+    { "name": "instrument_market", "type": "int32", "nullable": false },
+    { "name": "corporation_name", "type": "utf8", "nullable": false },
+    { "name": "specification_code", "type": "utf8", "nullable": false },
+    { "name": "days_to_settlement", "type": "int32", "nullable": true },
+    { "name": "trading_currency", "type": "utf8", "nullable": false },
+    { "name": "open_cents", "type": "int64", "nullable": false },
+    { "name": "high_cents", "type": "int64", "nullable": false },
+    { "name": "low_cents", "type": "int64", "nullable": false },
+    { "name": "average_cents", "type": "int64", "nullable": false },
+    { "name": "close_cents", "type": "int64", "nullable": false },
+    { "name": "best_bid_cents", "type": "int64", "nullable": false },
+    { "name": "best_ask_cents", "type": "int64", "nullable": false },
+    { "name": "trade_quantity", "type": "int64", "nullable": false },
+    { "name": "traded_contracts", "type": "int64", "nullable": false },
+    { "name": "volume_cents", "type": "int64", "nullable": false },
+    { "name": "strike_price_cents", "type": "int64", "nullable": false },
+    { "name": "strike_price_adjustment_indicator", "type": "utf8", "nullable": false },
+    { "name": "maturity_date", "type": "date32", "nullable": true },
+    { "name": "allocation_lot_size", "type": "int64", "nullable": false },
+    { "name": "strike_price_in_points_millionths", "type": "int64", "nullable": false },
+    { "name": "isin", "type": "utf8", "nullable": false },
+    { "name": "distribution_id", "type": "int32", "nullable": false }
+  ]
+}

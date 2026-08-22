@@ -1,0 +1,37 @@
+[package]
+name = "rsb3"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Arquivos públicos da B3 em Arrow/Parquet: parser COTAHIST posicional com preços em centavos inteiros"
+license = "MIT"
+repository = "https://github.com/milkway/rsb3"
+readme = "README.md"
+keywords = ["b3", "bovespa", "cotahist", "finance", "arrow"]
+categories = ["finance", "parser-implementations"]
+
+[features]
+default = ["fetch"]
+# Download oficial (COTAHIST) com cache, SHA-256 e manifesto de ingestão.
+# Desligável para quem só quer o parser, sem herdar dependências HTTP.
+fetch = ["dep:reqwest", "dep:zip", "dep:sha2", "dep:serde", "dep:serde_json"]
+# Endpoints web voláteis (índices, taxas referenciais) — planejado, ainda vazio.
+web = []
+
+[dependencies]
+arrow = "59"
+parquet = "59"
+chrono = "0.4"
+thiserror = "2"
+reqwest = { version = "0.13", features = ["blocking"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+sha2 = { version = "0.11", optional = true }
+zip = { version = "8", default-features = false, features = ["deflate"], optional = true }
+
+[dev-dependencies]
+serde_json = "1"
+
+[[example]]
+name = "backfill_cotahist"
+required-features = ["fetch"]
