@@ -1,6 +1,9 @@
 [package]
 name = "rsb3"
 version = "0.1.0"
+authors = [
+    "André Leite <leite@castlab.org>",
+]
 edition = "2024"
 rust-version = "1.85"
 description = "Arquivos públicos da B3 em Arrow/Parquet: parser COTAHIST posicional com preços em centavos inteiros"

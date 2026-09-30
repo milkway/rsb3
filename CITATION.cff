@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "rsb3: B3 public files as Arrow/Parquet (strict COTAHIST parser with integer-cent prices)"
+type: software
+authors:
+  - family-names: "Leite"
+    given-names: "André"
+    email: "leite@castlab.org"
+    orcid: "https://orcid.org/0000-0002-4718-9766"
+version: "0.1.0"
+date-released: "2026-08-22"
+repository-code: "https://github.com/milkway/rsb3"
+url: "https://crates.io/crates/rsb3"
+license: MIT
+keywords:
+  - B3
+  - Bovespa
+  - COTAHIST
+  - finance
+  - Arrow
+  - Parquet
+  - Rust
+abstract: >-
+  rsb3 downloads, validates and converts the public files of B3, the Brazilian
+  stock exchange, into Arrow/Parquet. Its COTAHIST parser reads the official
+  245-byte fixed-width historical quotes file strictly and keeps prices as
+  integer cents.
