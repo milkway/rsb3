@@ -18,7 +18,9 @@ O **COTAHIST** é o arquivo oficial de cotações históricas do pregão da B3
    Converter para ponto flutuante é decisão sua, nunca do parser.
 3. **Nenhuma linha é descartada em silêncio.** Largura errada, tipo de
    registro desconhecido ou campo inválido são erros explícitos com número de
-   linha — mudança de layout é detectada antes de contaminar datasets.
+   linha — mudança de layout é detectada antes de contaminar datasets. Header
+   e trailer são obrigatórios e o total declarado no trailer é conferido:
+   um download truncado falha no parse, não meses depois no dataset.
 
 ## Uso
 
@@ -26,6 +28,7 @@ O **COTAHIST** é o arquivo oficial de cotações históricas do pregão da B3
 use rsb3::cotahist::{self, Cache, Period, SchemaVersion};
 
 let cache = Cache { dir: "data".into() };
+// Period::Year(2025) | Period::Month { year: 2026, month: 9 } | Period::Day(date)
 let txt = cotahist::fetch(Period::Year(2025), &cache)?;   // download + cache + SHA-256 + manifesto
 let batch = cotahist::parse(&txt)?;                        // posicional -> Arrow
 cotahist::to_parquet(&[batch], "cotahist_2025.parquet".as_ref(), SchemaVersion::V1)?;
@@ -46,14 +49,18 @@ cargo run --release --example backfill_cotahist -- 2025
 
 Só quer o parser? `default-features = false` e nenhuma dependência HTTP entra.
 
+MSRV: Rust 1.88 (verificada no CI). O `parquet` entra sem features default —
+só a ponte Arrow e Snappy, o único codec que o crate grava.
+
 ## Validação: teste diferencial contra o `{rb3}`
 
 O parser é validado **contra o pacote R [`{rb3}`](https://github.com/ropensci/rb3)**
 (rOpenSci), que serve de oráculo: o mesmo arquivo é lido pelo leitor fwf do
 próprio pacote e comparado linha a linha, sem tolerância
-(`tests/differential_rb3_oracle.rs`). Na v0.1, o parser processou o ano de
-2025 completo (3.174.698 linhas) com zero rejeições e diferença zero contra o
-oráculo na contagem total e numa amostra integral de símbolos.
+(`tests/differential_rb3_oracle.rs`), em **todas as 25 colunas** do esquema.
+O parser processa o ano de 2025 completo (3.174.698 linhas) com zero rejeições
+e diferença zero contra o oráculo na contagem total e numa amostra integral de
+símbolos à vista, opções e termo.
 
 Os testes diferenciais pulam com mensagem quando `Rscript`/`{rb3}` não estão
 instalados — o CI não depende de R. Para rodá-los localmente:

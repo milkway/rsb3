@@ -69,7 +69,11 @@ impl SchemaVersion {
 /// Período de um arquivo COTAHIST oficial.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Period {
+    /// Arquivo anual (`COTAHIST_A<AAAA>`).
     Year(i32),
+    /// Arquivo mensal (`COTAHIST_M<MM><AAAA>`); `month` em 1..=12.
+    Month { year: i32, month: u32 },
+    /// Arquivo diário (`COTAHIST_D<DDMMAAAA>`).
     Day(NaiveDate),
 }
 
@@ -85,6 +89,7 @@ impl Period {
     pub fn file_stem(self) -> String {
         match self {
             Period::Year(y) => format!("COTAHIST_A{y}"),
+            Period::Month { year, month } => format!("COTAHIST_M{month:02}{year}"),
             Period::Day(d) => format!("COTAHIST_D{}", d.format("%d%m%Y")),
         }
     }
@@ -210,9 +215,13 @@ pub fn fetch(period: Period, cache: &Cache) -> Result<std::path::PathBuf, Error>
 const RECORD_LEN: usize = 245;
 
 /// Lê um arquivo COTAHIST (posicional, latin-1) e devolve um `RecordBatch`
-/// no esquema [`SchemaVersion::V1`]. Registros de header (00) e trailer (99)
-/// são descartados; qualquer outra anomalia é erro — nunca descarte
-/// silencioso.
+/// no esquema [`SchemaVersion::V1`].
+///
+/// Header (00) e trailer (99) não entram no batch, mas são exigidos: o
+/// arquivo deve começar pelo header, terminar no trailer e o total declarado
+/// no trailer deve bater com o número de cotações lidas — um arquivo truncado
+/// no download é detectado aqui, não meses depois no dataset. Qualquer outra
+/// anomalia é erro — nunca descarte silencioso.
 pub fn parse(path: &Path) -> Result<RecordBatch, Error> {
     let bytes = std::fs::read(path).map_err(|source| Error::Io {
         path: path.display().to_string(),
@@ -224,18 +233,20 @@ pub fn parse(path: &Path) -> Result<RecordBatch, Error> {
 /// Corpo do parser, separado para testes e para uso futuro em streaming.
 pub fn parse_bytes(bytes: &[u8]) -> Result<RecordBatch, Error> {
     let mut b = Builders::new();
-    let mut saw_trailer = false;
+    let mut saw_header = false;
+    // (linha do trailer, total de registros declarado nele)
+    let mut trailer: Option<(usize, i64)> = None;
+    let mut quotes: i64 = 0;
+    let mut last_line_no = 0;
 
     for (idx, raw_line) in bytes.split(|&c| c == b'\n').enumerate() {
         let line_no = idx + 1;
-        let line = match raw_line.strip_suffix(b"\r") {
-            Some(l) => l,
-            None => raw_line,
-        };
+        let line = raw_line.strip_suffix(b"\r").unwrap_or(raw_line);
         if line.is_empty() {
             continue; // linha final vazia após o último \n
         }
-        if saw_trailer {
+        last_line_no = line_no;
+        if trailer.is_some() {
             return Err(Error::UnexpectedLayout {
                 line: line_no,
                 reason: "registro após o trailer (99)".into(),
@@ -248,9 +259,29 @@ pub fn parse_bytes(bytes: &[u8]) -> Result<RecordBatch, Error> {
             });
         }
         match &line[0..2] {
-            b"00" => {} // header
-            b"99" => saw_trailer = true,
-            b"01" => parse_quote(line, line_no, &mut b)?,
+            b"00" => {
+                if saw_header {
+                    return Err(Error::UnexpectedLayout {
+                        line: line_no,
+                        reason: "segundo header (00) no mesmo arquivo".into(),
+                    });
+                }
+                saw_header = true;
+            }
+            b"99" => {
+                let total = int(line, pos::TRAILER_TOTAL, line_no, "TOTAL DE REGISTROS")?;
+                trailer = Some((line_no, total));
+            }
+            b"01" => {
+                if !saw_header {
+                    return Err(Error::UnexpectedLayout {
+                        line: line_no,
+                        reason: "cotação (01) antes do header (00)".into(),
+                    });
+                }
+                parse_quote(line, line_no, &mut b)?;
+                quotes += 1;
+            }
             other => {
                 return Err(Error::UnexpectedLayout {
                     line: line_no,
@@ -258,6 +289,30 @@ pub fn parse_bytes(bytes: &[u8]) -> Result<RecordBatch, Error> {
                 });
             }
         }
+    }
+
+    let Some((trailer_line, declared)) = trailer else {
+        return Err(Error::UnexpectedLayout {
+            line: last_line_no,
+            reason: if saw_header {
+                "arquivo sem trailer (99): download truncado?".into()
+            } else {
+                "arquivo vazio ou sem header (00)".into()
+            },
+        });
+    };
+    // A convenção do TOTAL DE REGISTROS mudou ao longo das décadas: os
+    // arquivos antigos (verificado em COTAHIST_A2010) contam header e trailer
+    // junto com as cotações; os atuais (A2025, diários de 2026) contam só as
+    // cotações. Aceitam-se as duas; qualquer outro valor é truncamento ou
+    // mudança de layout.
+    if declared != quotes && declared != quotes + 2 {
+        return Err(Error::UnexpectedLayout {
+            line: trailer_line,
+            reason: format!(
+                "trailer declara {declared} registros, mas o arquivo tem {quotes} cotações"
+            ),
+        });
     }
 
     b.finish()
@@ -324,6 +379,9 @@ mod pos {
     pub const STRIKE_PTS: (usize, usize) = (217, 230); // PTOEXE
     pub const ISIN: (usize, usize) = (230, 242); // CODISI
     pub const DIST: (usize, usize) = (242, 245); // DISMES
+
+    /// Registro 99: TOTAL DE REGISTROS (posições 32–42 da especificação).
+    pub const TRAILER_TOTAL: (usize, usize) = (31, 42);
 }
 
 fn field(line: &[u8], range: (usize, usize)) -> &[u8] {
@@ -649,7 +707,86 @@ mod tests {
     #[test]
     fn nomes_de_arquivo_oficiais() {
         assert_eq!(Period::Year(2025).file_stem(), "COTAHIST_A2025");
+        assert_eq!(
+            Period::Month {
+                year: 2026,
+                month: 9
+            }
+            .file_stem(),
+            "COTAHIST_M092026"
+        );
         let d = NaiveDate::from_ymd_opt(2025, 6, 2).expect("data");
         assert_eq!(Period::Day(d).file_stem(), "COTAHIST_D02062025");
+    }
+
+    /// Fixture sem o trailer: é o que um download interrompido deixa.
+    fn fixture_sem_trailer() -> Vec<u8> {
+        let bytes = std::fs::read(fixture_path()).expect("fixture");
+        let lines: Vec<&[u8]> = bytes
+            .split(|&c| c == b'\n')
+            .filter(|l| !l.is_empty())
+            .collect();
+        assert!(lines.last().expect("linhas").starts_with(b"99"));
+        // Cada linha ainda carrega o '\r'; religar com '\n' recompõe o CRLF.
+        let mut out = lines[..lines.len() - 1].join(&b'\n');
+        out.push(b'\n');
+        out
+    }
+
+    fn com_trailer(mut bytes: Vec<u8>, total: i64) -> Vec<u8> {
+        let mut trailer = vec![b' '; RECORD_LEN];
+        trailer[0..2].copy_from_slice(b"99");
+        trailer[pos::TRAILER_TOTAL.0..pos::TRAILER_TOTAL.1]
+            .copy_from_slice(format!("{total:011}").as_bytes());
+        bytes.extend_from_slice(&trailer);
+        bytes.extend_from_slice(b"\r\n");
+        bytes
+    }
+
+    #[test]
+    fn arquivo_truncado_sem_trailer_e_erro() {
+        let err = parse_bytes(&fixture_sem_trailer()).expect_err("deve falhar");
+        assert!(
+            matches!(err, Error::UnexpectedLayout { line: 7, .. }),
+            "{err}"
+        );
+        assert!(err.to_string().contains("sem trailer"), "{err}");
+    }
+
+    #[test]
+    fn trailer_aceita_as_duas_convencoes_de_contagem() {
+        // Arquivos atuais contam só as cotações...
+        let batch = parse_bytes(&com_trailer(fixture_sem_trailer(), 6)).expect("atual");
+        assert_eq!(batch.num_rows(), 6);
+        // ...e os antigos (ex.: A2010) contam header e trailer também.
+        let batch = parse_bytes(&com_trailer(fixture_sem_trailer(), 8)).expect("antigo");
+        assert_eq!(batch.num_rows(), 6);
+    }
+
+    #[test]
+    fn trailer_com_total_divergente_e_erro() {
+        let err = parse_bytes(&com_trailer(fixture_sem_trailer(), 7)).expect_err("deve falhar");
+        assert!(
+            matches!(err, Error::UnexpectedLayout { line: 8, .. }),
+            "{err}"
+        );
+        assert!(err.to_string().contains("declara 7"), "{err}");
+    }
+
+    #[test]
+    fn cotacao_antes_do_header_e_erro() {
+        let bytes = std::fs::read(fixture_path()).expect("fixture");
+        let sem_header: Vec<u8> = bytes[RECORD_LEN + 2..].to_vec(); // pula "00...\r\n"
+        let err = parse_bytes(&sem_header).expect_err("deve falhar");
+        assert!(
+            matches!(err, Error::UnexpectedLayout { line: 1, .. }),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn arquivo_vazio_e_erro() {
+        let err = parse_bytes(b"").expect_err("deve falhar");
+        assert!(matches!(err, Error::UnexpectedLayout { .. }), "{err}");
     }
 }

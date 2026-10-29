@@ -52,9 +52,7 @@ def quote_line(bdi, symbol, tpmerc, name, spec, prazot, moeda, precos, totneg,
 
 def main(out_path):
     header = ("00COTAHIST.D25" + "BOVESPA" + " " * 2 + REFDATE).ljust(245)
-    trailer = ("99COTAHIST.D25" + "BOVESPA" + " " * 2 + REFDATE + f"{7:011d}").ljust(245)
-    lines = [
-        header,
+    quotes = [
         quote_line("02", "PETR4", "010", "PETROBRAS", "PN", "   ", "R$",
                    (3210, 3299, 3180, 3240, 3255, 3250, 3260),
                    12345, 45678900, 147993516000, "BRPETRACNPR6", "102"),
@@ -74,8 +72,13 @@ def main(out_path):
         quote_line("96", "XPTO3F", "020", "XPTO FRAC", "ON", "   ", "R$",
                    (0, 0, 0, 0, 0, 0, 0),
                    0, 0, 0, "BRXPTOACNOR9", "100"),
-        trailer,
     ]
+    # TOTAL DE REGISTROS (pos. 32-42): nos arquivos atuais da B3 conta só as
+    # cotações (tipo 01), sem header/trailer — a convenção que o parser espera
+    # (ele também aceita a antiga, que soma header e trailer).
+    trailer = ("99COTAHIST.D25" + "BOVESPA" + " " * 2 + REFDATE
+               + f"{len(quotes):011d}").ljust(245)
+    lines = [header, *quotes, trailer]
     with open(out_path, "w", encoding="latin-1", newline="\r\n") as f:
         for line in lines:
             f.write(line + "\n")

@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # Semanal: pega advisories novos mesmo sem commits.
+    - cron: "17 6 * * 1"
 
 jobs:
   rust:
@@ -20,3 +23,23 @@ jobs:
       - name: testes (diferenciais contra o oráculo R pulam sem Rscript/{rb3})
         run: cargo test
       - run: cargo test --no-default-features
+      - run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
+
+  # A MSRV declarada em Cargo.toml tem de compilar de fato, com as features
+  # default (as dependências de `fetch` já exigiram 1.88 enquanto o manifesto
+  # dizia 1.85).
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --all-targets --all-features
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

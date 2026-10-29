@@ -53,9 +53,9 @@ fn run_oracle(file: &Path, symbols: Option<&str>) -> Option<OracleOutput> {
         .expect("primeira linha deve ser #total=<n>")
         .parse()
         .expect("total numérico");
-    let header: Vec<String> = lines.next()?.split(',').map(str::to_string).collect();
+    let header: Vec<String> = lines.next()?.split('\t').map(str::to_string).collect();
     let rows = lines
-        .map(|l| l.split(',').map(str::to_string).collect())
+        .map(|l| l.split('\t').map(str::to_string).collect())
         .collect();
     Some(OracleOutput {
         total,
@@ -73,14 +73,24 @@ fn str_col<'a>(batch: &'a RecordBatch, name: &str) -> &'a StringArray {
         .expect("tipo Utf8")
 }
 
-fn i64_col(batch: &RecordBatch, name: &str, i: usize) -> i64 {
-    let a: &Int64Array = batch
+fn col<'a, T: 'static>(batch: &'a RecordBatch, name: &str) -> &'a T {
+    batch
         .column_by_name(name)
-        .expect("coluna existe")
+        .unwrap_or_else(|| panic!("coluna {name} existe"))
         .as_any()
         .downcast_ref()
-        .expect("tipo Int64");
-    a.value(i)
+        .unwrap_or_else(|| panic!("tipo de {name}"))
+}
+
+/// Date32 → ISO; null → `9999-12-31` (como o {rb3} entrega "sem vencimento").
+fn date_str(a: &Date32Array, i: usize, null_as: &str) -> String {
+    if a.is_null(i) {
+        return null_as.to_string();
+    }
+    let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("epoch");
+    (epoch + chrono::Days::new(a.value(i) as u64))
+        .format("%Y-%m-%d")
+        .to_string()
 }
 
 /// Compara, em ordem de arquivo, as linhas do batch (opcionalmente filtradas
@@ -96,51 +106,89 @@ fn assert_rows_match(batch: &RecordBatch, filter: Option<&[&str]>, oracle: &Orac
         "quantidade de linhas comparáveis diverge do oráculo"
     );
 
-    let refdate: &Date32Array = batch
-        .column_by_name("refdate")
-        .expect("refdate")
-        .as_any()
-        .downcast_ref()
-        .expect("Date32");
-    let isin = str_col(batch, "isin");
-    let dist: &Int32Array = batch
-        .column_by_name("distribution_id")
-        .expect("distribution_id")
-        .as_any()
-        .downcast_ref()
-        .expect("Int32");
-    let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("epoch");
+    // Todas as 25 colunas do esquema v1 são comparadas; nenhuma fica de fora.
+    let refdate: &Date32Array = col(batch, "refdate");
+    let maturity: &Date32Array = col(batch, "maturity_date");
+    let settlement: &Int32Array = col(batch, "days_to_settlement");
+    let bdi = str_col(batch, "bdi_code");
+
+    const I32_COLS: &[&str] = &["instrument_market", "distribution_id"];
+    const I64_COLS: &[&str] = &[
+        "open_cents",
+        "high_cents",
+        "low_cents",
+        "average_cents",
+        "close_cents",
+        "best_bid_cents",
+        "best_ask_cents",
+        "trade_quantity",
+        "traded_contracts",
+        "volume_cents",
+        "strike_price_cents",
+        "allocation_lot_size",
+        "strike_price_in_points_millionths",
+    ];
+    const STR_COLS: &[&str] = &[
+        "corporation_name",
+        "specification_code",
+        "trading_currency",
+        "strike_price_adjustment_indicator",
+        "isin",
+    ];
 
     for (&row, v) in ours.iter().zip(&oracle.rows) {
         let sym = symbols.value(row);
         assert_eq!(sym, v[oracle.idx("symbol")], "símbolo na linha {row}");
+        let d = date_str(refdate, row, "");
+        assert_eq!(d, v[oracle.idx("refdate")], "refdate de {sym}");
 
-        let d = epoch + chrono::Days::new(refdate.value(row) as u64);
-        assert_eq!(d.format("%Y-%m-%d").to_string(), v[oracle.idx("refdate")]);
+        // CODBDI: o rsb3 preserva o texto ("02"); o {rb3} entrega inteiro.
+        let our_bdi: i32 = bdi.value(row).parse().expect("bdi numérico");
+        let oracle_bdi: i32 = v[oracle.idx("bdi_code")].parse().expect("bdi do oráculo");
+        assert_eq!(our_bdi, oracle_bdi, "bdi_code diverge para {sym} em {d}");
 
-        for name in [
-            "open_cents",
-            "high_cents",
-            "low_cents",
-            "average_cents",
-            "close_cents",
-            "best_bid_cents",
-            "best_ask_cents",
-            "trade_quantity",
-            "traded_contracts",
-            "volume_cents",
-        ] {
+        for name in I32_COLS {
+            let a: &Int32Array = col(batch, name);
+            let oracle_value: i32 = v[oracle.idx(name)].parse().expect("valor numérico");
+            assert_eq!(
+                a.value(row),
+                oracle_value,
+                "{name} diverge para {sym} em {d}"
+            );
+        }
+        for name in I64_COLS {
+            let a: &Int64Array = col(batch, name);
             let oracle_value: i64 = v[oracle.idx(name)].parse().expect("valor numérico");
             assert_eq!(
-                i64_col(batch, name, row),
+                a.value(row),
                 oracle_value,
-                "{name} diverge do oráculo para {sym} em {d}"
+                "{name} diverge para {sym} em {d}"
+            );
+        }
+        for name in STR_COLS {
+            assert_eq!(
+                str_col(batch, name).value(row),
+                v[oracle.idx(name)],
+                "{name} diverge para {sym} em {d}"
             );
         }
 
-        assert_eq!(isin.value(row), v[oracle.idx("isin")]);
-        let oracle_dist: i32 = v[oracle.idx("distribution_id")].parse().expect("dist");
-        assert_eq!(dist.value(row), oracle_dist);
+        // Nulos: PRAZOT em branco ↔ NA (vazio no TSV); DATVEN 99991231 ↔ 9999-12-31.
+        let ours = if settlement.is_null(row) {
+            String::new()
+        } else {
+            settlement.value(row).to_string()
+        };
+        assert_eq!(
+            ours,
+            v[oracle.idx("days_to_settlement")],
+            "days_to_settlement diverge para {sym} em {d}"
+        );
+        assert_eq!(
+            date_str(maturity, row, "9999-12-31"),
+            v[oracle.idx("maturity_date")],
+            "maturity_date diverge para {sym} em {d}"
+        );
     }
 }
 
@@ -159,11 +207,16 @@ fn fixture_sintetico_identico_ao_oraculo() {
 
 /// Diferencial sobre um arquivo OFICIAL real: aponte `RSB3_REAL_COTAHIST`
 /// para o TXT (ex.: baixado pelo exemplo `backfill_cotahist`). Compara a
-/// contagem total do arquivo inteiro e, integralmente, todas as linhas de uma
-/// amostra de símbolos líquidos.
+/// contagem total do arquivo inteiro e, integralmente (todas as colunas),
+/// todas as linhas de uma amostra de símbolos líquidos — incluindo uma opção
+/// e um futuro, para cobrir PRAZOT, DATVEN, PREEXE e PTOEXE não vazios.
 #[test]
 fn arquivo_real_identico_ao_oraculo() {
-    const SAMPLE: &[&str] = &["PETR4", "VALE3", "ITUB4", "BOVA11", "WEGE3"];
+    const SAMPLE: &[&str] = &[
+        "PETR4", "VALE3", "ITUB4", "BOVA11", "WEGE3", // à vista
+        "PETRA300", "VALEB700", // opções (PREEXE, DATVEN preenchidos)
+        "PETR4T",   // termo (PRAZOT preenchido)
+    ];
     let Ok(real) = std::env::var("RSB3_REAL_COTAHIST") else {
         eprintln!("SKIP: RSB3_REAL_COTAHIST não definido — teste sobre arquivo real não executado");
         return;

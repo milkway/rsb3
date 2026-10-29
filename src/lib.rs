@@ -22,7 +22,9 @@
 //! propósito, para não se confundir com o pacote R que serve de oráculo.
 //!
 //! Linhas rejeitadas nunca são silenciosas e mudança de layout é detectada
-//! como erro ([`Error::UnexpectedLayout`]) antes de contaminar datasets.
+//! como erro ([`Error::UnexpectedLayout`]) antes de contaminar datasets —
+//! inclusive arquivo truncado: header e trailer são obrigatórios e o total
+//! declarado no trailer é conferido com as cotações lidas.
 //!
 //! ## Exemplo
 //!
