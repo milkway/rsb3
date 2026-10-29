@@ -40,6 +40,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # Cargo.lock não é versionado (crate de biblioteca): gera-se aqui, o que
+      # audita a resolução que um consumidor novo receberia hoje.
+      - run: cargo generate-lockfile
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
