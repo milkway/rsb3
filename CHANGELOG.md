@@ -5,6 +5,11 @@ seguem [SemVer](https://semver.org/lang/pt-BR/). O esquema Arrow (`v1`) tem
 versionamento próprio e **não mudou**: Parquets gerados pela 0.1.0 continuam
 válidos.
 
+## [Não lançado]
+
+- Crédito: aviso de que o projeto não tem vínculo com a B3 S.A. nem com os
+  autores do `{rb3}`; o `{rb3}` entra em `references` no `CITATION.cff`.
+
 ## [0.2.0] — 2026-10-29
 
 ### Corrigido

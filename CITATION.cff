@@ -26,3 +26,11 @@ abstract: >-
   stock exchange, into Arrow/Parquet. Its COTAHIST parser reads the official
   245-byte fixed-width historical quotes file strictly and keeps prices as
   integer cents.
+references:
+  - type: software
+    title: "rb3"
+    authors:
+      - family-names: Freitas
+        given-names: Wilson
+    repository-code: "https://github.com/ropensci/rb3"
+    notes: "The rOpenSci R package that is the reference in this area, by Wilson Freitas and contributors; used here as the differential test oracle."

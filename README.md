@@ -22,6 +22,9 @@ O **COTAHIST** é o arquivo oficial de cotações históricas do pregão da B3
    e trailer são obrigatórios e o total declarado no trailer é conferido:
    um download truncado falha no parse, não meses depois no dataset.
 
+> Projeto independente, sem vínculo com a B3 S.A. – Brasil, Bolsa, Balcão, nem
+> mantido ou endossado por ela ou pelos autores do pacote R `{rb3}`.
+
 ## Uso
 
 ```rust
